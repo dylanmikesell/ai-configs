@@ -1,0 +1,5 @@
+{
+    "description": "Configuration for Codex/Copilot",
+    "suggestionLevel": "high",
+    "files_to_exclude": ["*.log", "*.tmp"]
+}

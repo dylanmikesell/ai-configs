@@ -1,0 +1,5 @@
+line-length = 88
+target-version = "py310"
+select = ["E", "F", "I", "N", "UP", "B"]
+# We keep line breaks minimal as per your preference
+ignore = ["E501"]

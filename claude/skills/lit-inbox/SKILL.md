@@ -82,17 +82,34 @@ Produce the fields the config asks for. Default set if the config is silent:
 - **Key takeaways** — bulleted, skimmable.
 - **Related** — `[[@citekey]]` links to other papers in the vault where relevant.
 
-### 2d. Highlight in the Zotero PDF
-Follow the config's highlighting guidance (how many, what kinds). Default: 6–12 of the
-most important sentences (claims, key results, definitions, method choices, limitations).
-For each, call `zotero_create_annotation(attachment_key, page, text, color, comment)`:
-- `text` MUST be the **exact** substring from that page's text layer (verify by reading
-  the page). Ligatures (ﬀ, ﬁ) and hyphenation break matches — pick clean, contiguous
-  phrases; shorten rather than risk a miss.
-- Use color to encode meaning if the config defines a scheme; otherwise yellow `#ffd400`.
-- Put a short "why this matters" in `comment`.
-- If a highlight fails to match, adjust the text and retry once; then move on and log it.
-Scanned/image-only PDFs have no text layer — skip highlighting and note it.
+### 2d. Highlight in the Zotero PDF (PER-LINE, full sentences)
+`zotero_create_annotation(attachment_key, page, text, color, comment)` takes only
+`(page, exact text)` and maps the text to rectangles itself. That mapping is reliable
+ONLY for a single physical line of text that is unique on the page. Multi-line strings
+get rounded to full-line width (over-painting adjacent words), and text that repeats on
+the page is highlighted at EVERY occurrence. So highlight the full sentence by creating
+**one annotation per physical line** it spans:
+
+- Get exact line breaks from `zotero_read_pdf_pages` (it preserves them). Follow the
+  config for how many sentences and which kinds (claims, key numbers, methods, limits).
+- Split the target sentence at the PDF's physical line boundaries. For each line the
+  annotation `text` is the exact on-page substring of the sentence on that line:
+  - first line: sentence's start word → end of that line (KEEP a trailing hyphen if the
+    word is split at the line end, e.g. `"... causes predom-"`);
+  - middle lines: the whole line, verbatim;
+  - last line: line start → the sentence's final word/punctuation.
+- Copy each substring EXACTLY as rendered (including end-of-line hyphens). Each piece is
+  then a clean single-line match = one rectangle.
+- Make each piece UNIQUE on the page. If a line's text also appears elsewhere on the same
+  page (classic case: an abstract sentence echoed in a Plain-Language Summary), extend the
+  snippet by one adjacent word to disambiguate, or pick a different sentence. Don't cross
+  a line break to gain uniqueness.
+- Same color for all pieces of one sentence (config scheme, else `#ffd400`). Put the
+  "why it matters" comment on the FIRST piece only; leave later pieces' comment empty.
+- The config's highlight budget counts SENTENCES, not pieces (default 6–12 sentences).
+- Optional verify: re-read a sentence's pieces; if one produced rectangles far apart on
+  the page it matched a duplicate — delete it and redo with a unique snippet.
+- Scanned/image-only PDFs have no text layer — skip highlighting and note it.
 
 ### 2e. De-duplicate (preprint → published merge) — CRITICAL
 A paper must have **exactly one** Obsidian note across its whole life (preprint, then

@@ -12,6 +12,12 @@ into git.
     assesses the PDF, highlights it inside Zotero, and writes/merges an Obsidian
     literature note. See `skills/lit-inbox/SKILL.md`.
 
+## Plugins
+
+Marketplace plugins (installed via Claude Code, versioned upstream — not stored in this
+repo) are catalogued in [`plugins.md`](plugins.md), with reinstall commands. Currently:
+`claude-scientific-writer` (research writing / literature / document production).
+
 ## Install (Windows)
 
 ```powershell

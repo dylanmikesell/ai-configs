@@ -6,6 +6,7 @@ This repository contains configuration files, templates, and instructions for AI
 
 - **.github/workflows**: GitHub Actions workflows.
 - **antigravity**: Specific configurations for the Antigravity CLI.
+- **claude**: Claude Code skills & config, linked into `~/.claude` (see `claude/README.md`).
 - **vscode**: Configurations for VS Code based assistants (Claude, Codex).
 - **project-templates**: Boilerplate setup for new projects.
 - **snippets**: Reusable documentation/code snippets.

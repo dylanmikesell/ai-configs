@@ -125,9 +125,10 @@ bullets). This keeps the gist visible inside Zotero too.
 ### 2h. Mark done
 - Tag the item `claude/done` (`zotero_batch_update_tags`, select by exact title,
   `add_tags=["claude/done"]`). This tag is the authoritative "processed" marker.
-- Also add the item to `_Claude-Read` (`C2ECZCB4`) and, if cleanly possible, remove it
-  from `_Claude-Inbox` (`8425VLJY`) so the inbox reflects only unprocessed papers. If a
-  collection-move tool isn't available, the tag alone is sufficient.
+- Move it inbox → read with a single call:
+  `zotero_manage_collections(item_keys=[ITEM_KEY], add_to=["C2ECZCB4"],
+  remove_from=["8425VLJY"])` so the inbox reflects only unprocessed papers. (The
+  `claude/done` tag remains the authoritative processed marker regardless.)
 
 ---
 

@@ -28,6 +28,16 @@ pwsh -File claude/install.ps1
 This creates a directory **junction** `~/.claude/skills` → `claude/skills` (junctions
 work without admin rights and write through, so refining a skill edits the repo files).
 
+## Install (Linux/Mac)
+
+```bash
+# from the repo root
+bash claude/install.sh
+```
+
+This creates a **symlink** `~/.claude/skills` → `claude/skills` (write-through, same as
+the Windows junction).
+
 ## Notes
 
 - The `lit-inbox` skill references machine-specific paths (the Obsidian vault) and Zotero

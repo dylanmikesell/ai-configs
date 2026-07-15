@@ -11,6 +11,11 @@ into git.
     `_Claude-Inbox` collection, then tell Claude "process my inbox": it reads and
     assesses the PDF, highlights it inside Zotero, and writes/merges an Obsidian
     literature note. See `skills/lit-inbox/SKILL.md`.
+  - **spec-first-phoenix/** — spec-first ("Phoenix") development methodology. Structure a
+    project around durable specs + language-agnostic test contracts so implementations are
+    regenerable and pass the deletion test (delete the code, regenerate it from spec +
+    contract alone). Distils Chad Fowler, Drew Breunig, and Bergel in `references/`. See
+    `skills/spec-first-phoenix/SKILL.md`.
 
 ## Plugins
 

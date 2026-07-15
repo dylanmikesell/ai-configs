@@ -349,3 +349,18 @@ failed highlight).
   once created).
 - The assessment config governs judgement calls (focus, tone, highlight budget, appraisal
   depth, idea count). Re-read it every run.
+
+---
+
+## 6. Permissions (hands-off runs)
+
+Permission prompts are enforced by the Claude Code harness, not by this skill's text —
+so auto-approve can't be turned on from here. It's configured once in
+`~/.claude/settings.local.json` (`permissions.allow`). The rules that keep this skill
+prompt-free are:
+- `mcp__zotero` — the whole Zotero MCP server (connect + all read/write tools).
+- `Read`/`Write`/`Edit` on `C:/Users/DMi/OneDrive - NGI/Documents/NGI.Vault/**` — the
+  Obsidian vault (lit-notes, ideas, and the assessment config all live under it).
+
+If a new prompt appears (e.g. Zotero adds a tool, or a path moves), add the matching
+`allow` rule there — not in this file.

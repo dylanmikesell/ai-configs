@@ -16,6 +16,12 @@ into git.
     regenerable and pass the deletion test (delete the code, regenerate it from spec +
     contract alone). Distils Chad Fowler, Drew Breunig, and Bergel in `references/`. See
     `skills/spec-first-phoenix/SKILL.md`.
+  - **ngi-pptx/** — build NGI-branded PowerPoint decks from the corporate template. Opens
+    the bundled template (`assets/ngi-template.pptx`) and adds slides from its own branded
+    layouts, so the custom 33×19 cm page, Aptos fonts, and NGI palette are inherited rather
+    than rebuilt. Ships `scripts/pptx_helpers.py`, a full layout map (`references/layouts.md`),
+    and a visual `references/layout-gallery.pptx`. Requires `python-pptx`. See
+    `skills/ngi-pptx/SKILL.md`.
 
 ## Plugins
 

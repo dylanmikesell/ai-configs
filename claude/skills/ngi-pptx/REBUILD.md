@@ -87,7 +87,9 @@ Prereq: `python-pptx` installed (`pip install python-pptx`).
 
 8. **Re-deploy to the desktop app / claude.ai.** A git push does **not** reach that
    Skills system. Re-zip the `ngi-pptx` folder and re-upload it under
-   **Settings → Capabilities → Skills**.
+   **Settings → Capabilities → Skills**. For the shareable (public) build, run
+   `python scripts/make_public_zip.py` — it sanitises internal references, stamps the
+   author + version + date (read from SKILL.md), and writes `ngi-pptx-skill_pub.zip`.
 
 9. **Update the AI MOC** (`Extras/MOC/🤖 AI + Claude MOC.md`) — new date and any
    changed layout names — per the standing "document new AI capabilities" rule.
@@ -100,6 +102,7 @@ Prereq: `python-pptx` installed (`pip install python-pptx`).
 | `make_gallery.py` | Step 4 — regenerate the visual layout gallery |
 | `check_integrity.py` | Step 6 — assert a produced deck has no duplicate parts and opens |
 | `pptx_helpers.py` | The runtime API; `describe(open_template())` for a live layout dump |
+| `make_public_zip.py` | Build the sanitised public zip (author/version/date stamped; aborts on any leak) |
 
 ## Guardrails to preserve in any rebuild
 

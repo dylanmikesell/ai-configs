@@ -22,7 +22,8 @@ template and everything branded is inherited for free: the **custom 33 × 19 cm 
 palette**, and the master graphics / footer / logo. Rebuilding those by hand from a
 style spec is exactly the fragile path that produces off-brand slides — don't.
 
-Owner: Dylan Mikesell (dylan.mikesell@ngi.no). Template theme: "Agenda old".
+**Version 1.0.0** · Maintainer: Dylan Mikesell (dylan.mikesell@ngi.no) · Last updated:
+2026-07-21 · Template theme: "Agenda old".
 
 ## What ships in this skill
 
@@ -156,3 +157,14 @@ regenerate `references/layouts.md` and the gallery, reconcile the layout names i
 file, re-validate with `scripts/check_integrity.py`, then commit and re-upload the zip
 to the desktop app. The skill defers all branding to the template file, so the update
 is mechanical, not a rewrite.
+
+## Changelog
+
+Versioned with semver. **Bump the version and update the *Last updated* date above on
+every template refresh or skill change** (see `REBUILD.md`). Major = new template
+version / breaking layout-name changes; minor = added layouts or features; patch = doc
+or helper fixes.
+
+- **1.0.0** (2026-07-21) — Initial release. Builds on the NGI "Agenda old" template;
+  16 layouts mapped in `references/layouts.md`; helper API, layout gallery, and the
+  template-refresh playbook included.

@@ -67,7 +67,9 @@ Prereq: `python-pptx` installed (`pip install python-pptx`).
    - the *Choosing a layout* table (layout names),
    - the example code (layout names / placeholder indices used),
    - the *Fonts & colours* block,
-   - the slide-size figure in the opening premise, if it changed.
+   - the slide-size figure in the opening premise, if it changed,
+   - **bump the version and the *Last updated* date** in the Changelog (major for a new
+     template version / breaking layout-name changes).
 
 6. **Re-validate the workflow** (don't trust it opens — check):
    - `describe(open_template())` prints the new layouts + placeholders — spot-check

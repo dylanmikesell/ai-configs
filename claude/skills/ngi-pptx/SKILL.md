@@ -35,6 +35,9 @@ Owner: Dylan Mikesell (dylan.mikesell@ngi.no). Template theme: "Agenda old".
   placeholder indices. **Read it before choosing layouts.**
 - `references/layout-gallery.pptx` — one slide per layout; open in PowerPoint to
   see each branded layout visually.
+- `REBUILD.md` — the playbook for updating this skill when NGI ships a new template
+  version, plus `scripts/inspect_template.py` (dump a template's layouts/fonts/colours)
+  and `scripts/check_integrity.py` (verify a produced deck won't trigger a repair prompt).
 
 ## Dependencies
 
@@ -146,7 +149,10 @@ python-pptx can't render, so it can't tell you the deck *looks* right — check 
 
 ## Maintenance
 
-If the template is updated: replace `assets/ngi-template.pptx`, then
-`python scripts/make_gallery.py` to refresh the gallery, and reconcile
-`references/layouts.md` against `describe(open_template())` (names or placeholder
-indices may have changed).
+NGI refreshes this template every couple of years. When that happens, follow the
+step-by-step playbook in **`REBUILD.md`** — the short version is: replace
+`assets/ngi-template.pptx`, run `scripts/inspect_template.py` to dump the new facts,
+regenerate `references/layouts.md` and the gallery, reconcile the layout names in this
+file, re-validate with `scripts/check_integrity.py`, then commit and re-upload the zip
+to the desktop app. The skill defers all branding to the template file, so the update
+is mechanical, not a rewrite.

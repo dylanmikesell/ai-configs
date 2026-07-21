@@ -21,7 +21,8 @@ into git.
     layouts, so the custom 33×19 cm page, Aptos fonts, and NGI palette are inherited rather
     than rebuilt. Ships `scripts/pptx_helpers.py`, a full layout map (`references/layouts.md`),
     and a visual `references/layout-gallery.pptx`. Requires `python-pptx`. See
-    `skills/ngi-pptx/SKILL.md`.
+    `skills/ngi-pptx/SKILL.md`, and `skills/ngi-pptx/REBUILD.md` for the playbook to
+    update the skill when NGI ships a new template version.
 
 ## Plugins
 

@@ -1,3 +1,6 @@
 # Python
 __pycache__/
 *.py[cod]
+
+# Local skill backups (git tracks history)
+claude/_backups/

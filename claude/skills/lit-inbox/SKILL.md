@@ -1,366 +1,242 @@
 ---
 name: lit-inbox
 description: >-
-  Process new papers dropped into the Zotero "_Claude-Inbox" collection. For each
-  new paper: read and assess the PDF against the user's editable assessment config,
-  create highlight annotations on the PDF inside Zotero, and write (or merge) an
-  Obsidian literature note that includes a critical appraisal (rigor/bias/stats) and
-  a reproducibility check, then seed linked "research-idea" notes that extend the
-  paper toward the user's work. Handles preprint -> published de-duplication so a paper
-  is never noted twice. Trigger with the slash command /lit-inbox or phrases like
-  "process my inbox", "process my papers", "read my new papers", "run lit-inbox".
+  Process papers dropped into the Zotero "_Claude-Inbox" collection with a tiered,
+  token-efficient pipeline. Each paper is handled by its own subagent: triage from
+  metadata/abstract/outline (Tier 0), a targeted read of intro/conclusions (Tier 1), or a
+  full methods-and-results read with critical appraisal, reproducibility check and
+  research-idea seeding (Tier 2). Writes Zotero highlights, an Obsidian literature note with
+  recall-ready frontmatter (tier, summary, page anchors), and a Zotero child note, then
+  refreshes the Zotero semantic index. Also supports upgrading a Tier 0/1 paper to Tier 2
+  (tag `claude/deepen`, or "upgrade @citekey") and a one-time migration of v1 notes. Use this
+  skill for "/lit-inbox", "process my inbox", "process my papers", "read my new papers",
+  "run lit-inbox", "upgrade @citekey", "deepen this paper", or "migrate my lit notes".
+  Never use it for manuscripts under peer review.
 ---
 
-# lit-inbox — Zotero → Obsidian literature pipeline
+# lit-inbox v2: Zotero to Obsidian literature pipeline
 
-This skill turns "I dropped a paper in my Zotero inbox" into "the PDF is highlighted
-in Zotero and there is a rich, linkable literature note in Obsidian" — with the human
-staying in control of *what* gets assessed via an external, editable config file.
+This skill converts "I dropped a paper in my Zotero inbox" into a highlighted PDF in Zotero
+and a linkable, recall-ready literature note in Obsidian, while spending tokens in proportion
+to how relevant each paper is. The companion skill `lit-recall` retrieves what this skill
+wrote. Both skills depend on the frontmatter schema in `references/templates.md`; change the
+schema in one place only and update both.
 
-Owner: Dylan Mikesell (dylan.mikesell@ngi.no). Manual trigger for now (a cron job may
-be added later; the pipeline below is written to run identically either way).
+Owner: Dylan Mikesell (dylan.mikesell@ngi.no). Manual trigger; the logic is written to run
+identically if a scheduled job is added later.
+
+## How the files are organised
+
+| File | Loaded by | When |
+|---|---|---|
+| `SKILL.md` (this file) | main session | always |
+| `references/per-paper.md` | each subagent | always, first |
+| `references/templates.md` | each subagent | when writing notes; migrate subagents read its §1 |
+| `references/appraisal.md` | subagent | Tier 2 only (and upgrades to Tier 2) |
+
+The main session never reads the three reference files. This keeps the orchestrating
+context small, and keeps appraisal instructions out of Tier 0 and Tier 1 runs.
 
 ---
 
 ## 0. Configuration (single source of truth)
 
-All machine-specific values live here. If any path/key changes, edit only this block.
+All machine-specific values live in this table. If a path or key changes, edit only here.
 
 | Setting | Value |
 |---|---|
-| Zotero library | My Library (libraryID = 1) — the default active library |
-| Inbox collection | `_Claude-Inbox` — key `8425VLJY` |
-| Done/read collection | `_Claude-Read` — key `C2ECZCB4` |
+| Zotero library | My Library (libraryID = 1), the default active library |
+| Inbox collection | `_Claude-Inbox`, key `8425VLJY` |
+| Done/read collection | `_Claude-Read`, key `C2ECZCB4` |
 | Processed marker tag | `claude/done` |
-| Assessment config (read EVERY run) | `C:\Users\DMi\OneDrive - NGI\Documents\NGI.Vault\Extras\Claude\literature-assessment.md` |
+| Tier tags | `claude/tier-0`, `claude/tier-1`, `claude/tier-2` (exactly one per processed item) |
+| Upgrade request tag | `claude/deepen` (added by the user to an item in `_Claude-Read`) |
+| Skill folder | `C:\Users\DMi\.claude\skills\lit-inbox\` (edit if installed elsewhere) |
+| Assessment config (read by every subagent, every run) | `C:\Users\DMi\OneDrive - NGI\Documents\NGI.Vault\Extras\Claude\literature-assessment.md` |
 | Obsidian lit-notes folder | `C:\Users\DMi\OneDrive - NGI\Documents\NGI.Vault\Literature-notes\` |
-| Note filename | `@{citekey}.md` (matches the vault's `[[@citekey]]` wikilink convention) |
-| Zotero child note | ON — also write a short takeaways note onto the Zotero item |
+| Note filename | `@{citekey}.md` |
 | Obsidian ideas folder | `C:\Users\DMi\OneDrive - NGI\Documents\NGI.Vault\Ideas\` |
-| Idea note filename | `idea-{slug}.md` (kebab-case slug of the idea's core question) |
-| Critical appraisal | ON — rigor / bias / stats / claim-vs-data flags in the assessment (framework in §2c) |
-| Reproducibility check | ON — note data & code availability and reuse potential (§2c) |
-| Research-idea notes | ON — seed 2–4 linked idea notes per paper (§2g) |
+| Idea note filename | `idea-{slug}.md` |
+| Backup folder | `C:\Users\DMi\OneDrive - NGI\Documents\NGI.Vault\Extras\Claude\backups\` |
+| Zotero child note | ON for Tier 1 and Tier 2 (title "Claude takeaways") |
+| Highlight cap, Tier 1 | 6 sentences |
+| Highlight cap, Tier 2 | the config's budget, never more than 12 sentences |
+| Papers per run | 10 (oldest first; the rest wait for the next run) |
 
-The assessment config is the user's control panel. **Always read it fresh at the start
-of every run** — the user edits it between runs to steer what you extract and highlight.
-It also governs the newer features: how hard to push the critical appraisal, whether to
-run the reproducibility check, and how many research-idea notes to seed (0 turns the idea
-step off). Honor those settings; the table values above are only defaults when the config
-is silent. Never cache your memory of it.
+### What each tier does
 
----
+| | Tier 0 (triage) | Tier 1 (skim) | Tier 2 (full) |
+|---|---|---|---|
+| Reads | metadata, abstract, PDF outline only | intro end, conclusions, captions on those pages (max 4 pages) | Tier 1 pages plus methods, results, discussion, availability statements |
+| Obsidian note | stub (`status: triaged`) | full template, appraisal and reproducibility marked "not assessed" | full template |
+| Highlights | none | up to 6 sentences | up to the budget (max 12) |
+| Appraisal and reproducibility | no | no | yes |
+| Idea notes | no | no | yes (count from config) |
+| Zotero child note | no | yes | yes |
 
-## 1. Find the work
+### The assessment config
 
-1. Read the assessment config file (Section 0 path). Treat its contents as
-   authoritative instructions for *what to assess and highlight*.
-2. List items in the inbox collection (`zotero_get_collection_items`, key `8425VLJY`,
-   `detail="full"`).
-3. For each item, fetch metadata as JSON (`zotero_get_item_metadata`, `format="json"`)
-   and check its tags. **Skip any item already tagged `claude/done`** (idempotency —
-   safe to re-run any time). Attachments are not papers; ignore them.
-4. If nothing is unprocessed, report "Inbox clear" and stop.
-5. Process the remaining items one at a time, oldest first.
-
----
-
-## 2. Per-paper pipeline
-
-For each unprocessed item (`ITEM_KEY`):
-
-### 2a. Gather identity
-- BibTeX (`zotero_get_item_metadata`, `format="bibtex"`) → the **citekey** and clean fields.
-- Markdown metadata (with abstract) for title, authors, year, DOI, item type, venue.
-- Record the **item type** — note whether it is a `preprint` vs `journalArticle`/etc.
-- Find the PDF attachment key (`zotero_get_item_children`; also confirm `numChildren` in
-  the item metadata). **PDF-required gate — if there is NO PDF attachment, STOP processing
-  this item:** do not write/merge an Obsidian note, do not seed ideas, do not create a
-  Zotero child note, and do **NOT** tag `claude/done` or move it out of the inbox. Leave it
-  in `_Claude-Inbox` untouched and add it to the report's **"⚠️ Missing PDF"** list so the
-  user can attach the PDF and re-run. Then continue to the next item.
-  (A PDF that *exists* but is scanned/image-only is a different case — see §2d: process it
-  from text where possible and skip only the highlighting.)
-
-### 2b. Read the paper
-- Get the PDF outline if available (`zotero_get_pdf_outline`) to map sections.
-- Read the full text (`zotero_get_item_fulltext`) OR read page ranges
-  (`zotero_read_pdf_pages`) covering intro, methods, results, and conclusions.
-- Read enough to genuinely assess the paper — do not assess from the abstract alone.
-
-### 2c. Assess (follow the assessment config)
-Produce the fields the config asks for. Default set if the config is silent:
-- **Contribution** — the one-sentence "what's new / why it matters".
-- **Key findings** — 3–6 concrete results (numbers where available).
-- **Methods / data** — approach, dataset, instruments, study area.
-- **Relevance to my work** — explicit ties to the user's research (see config).
-- **Limitations / open questions** — what's weak, unresolved, or worth following up.
-- **Critical appraisal** — rigor flags (framework below). 2–5 bullets, not an essay.
-- **Reproducibility** — data & code availability + could-I-reuse-this verdict (framework below).
-- **Key takeaways** — bulleted, skimmable.
-- **Related** — `[[@citekey]]` links to other papers in the vault where relevant.
-
-**Critical-appraisal framework** (adapted from `scientific-critical-thinking`). Skim these
-lenses and surface only the flags that genuinely apply — say "no major concerns" when it's
-sound. Ground every flag in the actual text; never invent a weakness to fill the section.
-- **Design/validity** — does the design support the causal claims made? Confounders controlled?
-- **Statistics** — sample size / power; correlation used as causation; multiple comparisons
-  uncorrected; effect sizes & uncertainty reported (error bars, CIs) or just p-values?
-- **Bias** — selection/sampling, p-hacking or HARKing (post-hoc hypotheses), cherry-picked
-  evidence, ignored contradictory findings.
-- **Claim vs. data** — do the conclusions follow from what was actually shown, or overreach
-  (overgeneralized, extrapolated beyond the data, mechanism claimed without mechanistic evidence)?
-Where useful, name the issue precisely (e.g. "causal claim from correlational field data").
-
-**Reproducibility framework** (from `peer-review`, reuse-focused — NOT an accept/reject verdict).
-- Is the **data** deposited/available (repository, DOI, accession numbers) or on request/absent?
-- Is **code** shared (GitHub/Zenodo/supplement) and are software/versions/parameters stated?
-- Are methods detailed enough that you could re-run or adapt the workflow?
-- One-line **reuse verdict**: could Dylan reuse the data/code/method in his work, and how?
-
-### 2d. Highlight in the Zotero PDF (PER-LINE, full sentences)
-`zotero_create_annotation(attachment_key, page, text, color, comment)` takes only
-`(page, exact text)` and maps the text to rectangles itself. That mapping is reliable
-ONLY for a single physical line of text that is unique on the page. Multi-line strings
-get rounded to full-line width (over-painting adjacent words), and text that repeats on
-the page is highlighted at EVERY occurrence. So highlight the full sentence by creating
-**one annotation per physical line** it spans:
-
-- Get exact line breaks from `zotero_read_pdf_pages` (it preserves them). Follow the
-  config for how many sentences and which kinds (claims, key numbers, methods, limits).
-- Split the target sentence at the PDF's physical line boundaries. For each line the
-  annotation `text` is the exact on-page substring of the sentence on that line:
-  - first line: sentence's start word → end of that line (KEEP a trailing hyphen if the
-    word is split at the line end, e.g. `"... causes predom-"`);
-  - middle lines: the whole line, verbatim;
-  - last line: line start → the sentence's final word/punctuation.
-- Copy each substring EXACTLY as rendered (including end-of-line hyphens). Each piece is
-  then a clean single-line match = one rectangle.
-- Make each piece UNIQUE on the page. If a line's text also appears elsewhere on the same
-  page (classic case: an abstract sentence echoed in a Plain-Language Summary), extend the
-  snippet by one adjacent word to disambiguate, or pick a different sentence. Don't cross
-  a line break to gain uniqueness.
-- Same color for all pieces of one sentence (config scheme, else `#ffd400`). Put the
-  "why it matters" comment on the FIRST piece only; leave later pieces' comment empty.
-- The config's highlight budget counts SENTENCES, not pieces (default 6–12 sentences).
-- Optional verify: re-read a sentence's pieces; if one produced rectangles far apart on
-  the page it matched a duplicate — delete it and redo with a unique snippet.
-- Scanned/image-only PDFs have no text layer — skip highlighting and note it.
-
-### 2e. De-duplicate (preprint → published merge) — CRITICAL
-A paper must have **exactly one** Obsidian note across its whole life (preprint, then
-published). Before writing, look for an existing note for this paper:
-1. Glob `Literature-notes/*.md` and compare against a **normalized title** (lowercase,
-   strip punctuation/whitespace). Also compare DOI and citekey. Title match is the
-   reliable cross-version signal, because a preprint and its published version have
-   **different DOIs** but (almost always) the **same title**.
-2. **No match →** create a new note `@{citekey}.md` (Section 3).
-3. **Match found →** MERGE into the existing note, do NOT create a second file:
-   - Keep the original filename. If the citekey changed (e.g. preprint `xxx2026` →
-     published `yyy2027`), add the new citekey to the note's `aliases:` so old
-     `[[@oldcitekey]]` links still resolve.
-   - Update frontmatter: set `version: published`, move the old DOI to `preprint_doi:`,
-     set `doi:` to the published DOI, update `year`/venue, append the new `zotero_key`.
-   - Regenerate the Claude-managed assessment zone from the newer version.
-   - **Never touch the user zone** (everything below the `# My notes` marker).
-   - Relate the two Zotero items: `zotero_add_item_relation(preprint_key,
-     published_key, relation_type="owl:sameAs")`.
-
-### 2f. Write / update the Obsidian note
-Write the note per the template in Section 3. Managed zone above the marker is yours to
-(re)generate; the user zone below is sacrosanct.
-
-### 2g. Seed research-idea notes (Obsidian)
-Turn the reading into *your own next moves*. Using the hypothesis-quality bar (below),
-generate the number of ideas the config asks for (default 2–4; `0` = skip this step) that
-**extend** the paper toward Dylan's work — not a summary of the paper's own future-work
-section. Each idea becomes its **own note** in the ideas folder (Section 0), so it's a
-first-class graph node he can grow and link to other papers later.
-
-**What makes an idea worth a note** (adapted from `hypothesis-generation`):
-- **Mechanistic** — proposes *how/why*, not just "someone should study X".
-- **Testable & falsifiable** — a concrete prediction that could come out either way.
-- **Distinguishable** — doesn't just restate the paper; adds a new angle, scale, method,
-  or application (ideally tied to Dylan's geophysics/NGI context).
-- **Grounded** — traces back to something specific the paper showed.
-
-For each idea, write a note from the template in **Section 3b**. Before creating it, do a
-**light de-dup**: glob the ideas folder and compare the idea's core question (normalized)
-against existing `idea-*.md`. If one clearly already exists, DON'T duplicate — add this
-paper's citekey to that note's `seeds:` list and append a one-line note under a
-`## Related findings` heading instead. Otherwise create `idea-{slug}.md`.
-
-Idea notes are **user-owned once created**: on later runs (including preprint→published
-merges) never rewrite an existing idea note's body — only append a new `seeds:` entry / a
-`## Related findings` line. In the lit note's managed zone, list `[[idea-...]]` backlinks
-for every idea seeded from this paper (so the graph connects both ways).
-
-### 2h. Optional Zotero child note
-If enabled (Section 0), create a short takeaways note on the item
-(`zotero_create_note`, title "Claude takeaways", concise HTML: contribution + 3–5
-bullets). This keeps the gist visible inside Zotero too.
-
-### 2i. Mark done
-- Tag the item `claude/done` (`zotero_batch_update_tags`, select by exact title,
-  `add_tags=["claude/done"]`). This tag is the authoritative "processed" marker.
-- Move it inbox → read with a single call:
-  `zotero_manage_collections(item_keys=[ITEM_KEY], add_to=["C2ECZCB4"],
-  remove_from=["8425VLJY"])` so the inbox reflects only unprocessed papers. (The
-  `claude/done` tag remains the authoritative processed marker regardless.)
+Each subagent reads the config fresh at the start of its paper; never rely on remembered
+content. The config governs relevance criteria and tier thresholds (section "Relevance &
+tiering"), highlight budget and colors, appraisal depth, and idea count (0 turns idea
+seeding off). The values in this file are defaults used only when the config is silent.
 
 ---
 
-## 3. Obsidian note template (rendered, static — no plugin required)
+## 1. Modes
 
-Write plain Markdown. Preserve the vault's dataview inline-field style (`Field:: value`)
-and `category: literaturenote` so existing dataview queries keep working. Fill every
-`{{...}}`. Keep the exact `# My notes` marker line so merges can find the user zone.
+**Inbox run (default).** Triggered by `/lit-inbox` or "process my inbox". Section 2.
 
-```markdown
----
-category: literaturenote
-tags: [{{topic-tags, kebab-case}}]
-citekey: {{citekey}}
-aliases: ["@{{citekey}}"]
-zotero_key: {{ITEM_KEY}}
-attachment_key: {{PDF_KEY}}
-doi: {{doi}}
-year: {{year}}
-version: {{preprint|published}}
-status: read
-date_processed: {{YYYY-MM-DD}}
----
+**Upgrade.** Triggered by "upgrade @citekey" / "deepen @citekey", or automatically for every
+item in `_Claude-Read` that carries the tag `claude/deepen`. Section 3.
 
-> [!Cite]
-> {{full formatted citation}}
-
-> [!md] Metadata
-> **Title**:: {{title}}
-> **FirstAuthor**:: {{first author "Last, First"}}
-> **Year**:: {{year}}
-> **itemType**:: {{itemType}}
-> **Citekey**:: {{citekey}}
-
-> [!Synth] Claude assessment ({{version}} · assessed {{YYYY-MM-DD}})
-> **Contribution**:: {{one sentence}}
-> **Methods**:: {{approach / data / study area}}
-> **Relevance**:: {{ties to the user's research}}
-> **Limitations**:: {{weaknesses / open questions}}
-> **Related**:: {{[[@citekey]], ...}}
-> **Ideas**:: {{[[idea-slug]], ... — backlinks to notes seeded in §2g, or "—"}}
-
-> [!Warning] Critical appraisal
-> {{2–5 rigor/bias/stats/claim-vs-data flags, or "No major concerns — sound within its scope."}}
-
-> [!Check] Reproducibility
-> **Data**:: {{repository / DOI / on request / not available}}
-> **Code**:: {{shared where / not shared}}
-> **Reuse**:: {{one-line could-I-reuse-this verdict}}
-
-## Key findings
-- {{finding with numbers}}
-
-## Key takeaways
-- {{skimmable takeaway}}
-
-> [!Abstract]
-> {{abstract}}
-
-> [!LINK] PDF
-> [Open in Zotero](zotero://select/library/items/{{ITEM_KEY}}) · [PDF]({{file:// path}})
-
-## Highlights (from Zotero)
-- p.{{n}} "{{highlighted text}}" — {{why}}
-
----
-# My notes
-<!-- USER ZONE — Claude never edits below this line. Add your own thoughts and [[links]] here. -->
-```
-
-On a **merge/update**, rewrite only the frontmatter + everything from `> [!Cite]` down to
-the `---` above `# My notes`. Leave the user zone byte-for-byte unchanged.
+**Migrate.** Triggered by "migrate my lit notes". One-time pass that adds the v2 frontmatter
+fields to notes written by v1. Section 4.
 
 ---
 
-## 3b. Research-idea note template (Section 2g)
+## 2. Inbox run (main session)
 
-One note per idea, in the ideas folder. The title is the idea phrased as a **question**.
-Everything below `# Develop` is the user's — Claude only ever appends a new `seeds:` entry
-and, if this paper is a fresh seed for an existing idea, a `## Related findings` line.
+The main session only orchestrates. It does not read PDFs, notes or the config.
 
-```markdown
----
-type: research-idea
-status: seed
-summary: {{idea as a one-line question — this is what the Ideas MOC table shows}}
-seeds: ["[[@{{citekey}}]]"]
-created: {{YYYY-MM-DD}}
-tags: [research-idea, {{topic-tags}}]
----
-tags:: [[💡 Ideas MOC]]
+1. **Check the config exists.** Use Glob on the assessment config path. If it is missing,
+   stop and tell the user; do not guess at criteria.
+2. **List the work.** `zotero_get_collection_items` (`collection_key="8425VLJY"`, `detail="full"`, `limit=100`). If the
+   listing does not include tags, fetch tags per item with `zotero_get_item_metadata`
+   (`format="json"`). Skip attachments and skip any item tagged `claude/done`. If nothing is
+   left, report "Inbox clear" and go to step 5 only if an upgrade is pending (Section 3).
+3. **Order and cap.** Oldest first. Keep the first 10 (Section 0). Mention the remainder
+   in the report.
+4. **One subagent per paper, strictly sequential.** Use the Agent (subagent) tool with a
+   general-purpose agent. Wait for each result before launching the next. Do not run
+   subagents in parallel: a preprint and its published version may both be in the inbox,
+   and parallel runs would race on duplicate detection and on idea de-duplication.
+   Prompt template (fill the braces; do not add anything else):
 
-# {{idea as a one-line question}}
+   > You are processing one paper for the lit-inbox skill. First read
+   > `{SKILL_DIR}\references\per-paper.md` and follow it exactly. ITEM_KEY={key}.
+   > MODE=inbox. Assessment config: `{CONFIG_PATH}`. Never delete files. When finished,
+   > reply with ONLY the single RESULT line defined in per-paper.md §9, with no other prose.
 
-**Extends**:: [[@{{citekey}}]]
-**Why**:: {{what in the paper makes this plausible — the mechanistic hook}}
-**Prediction**:: {{concrete, falsifiable — what we'd expect to see if the idea holds}}
-**Test**:: {{how Dylan could actually test it — data, instrument, site, method}}
-**Ties to my work**:: {{link to the NGI/geophysics angle, other [[@citekey]] or [[notes]]}}
-
-## Related findings
-- [[@{{citekey}}]] ({{YYYY}}) — {{one line on how this paper feeds the idea}}
-
-# Develop
-<!-- USER ZONE — Claude never edits below this line. Grow the idea here. -->
-```
-
-**Fields the [[💡 Ideas MOC]] table depends on** — always fill them:
-- `summary` — the readable one-line question (the table's main column).
-- `status` — one of `seed` · `exploring` · `active` · `parked` · `done` (start at `seed`).
-- `seeds` — YAML list of `"[[@citekey]]"` wikilink strings (add one per de-dup merge; §2g).
-- `created` — the run date.
+   Record each RESULT line. If a subagent returns anything else, or reports `failed`, note
+   it and continue with the next paper; never retry within the same run.
+5. **Refresh the semantic index** (once, after the last paper, only if at least one paper
+   was created, merged, stubbed or upgraded):
+   - Call `zotero_get_search_database_status`. If it reports the semantic extras are not
+     installed, skip the update and say so in the report.
+   - If the database is empty or has never been built, tell the user that a first full
+     build can take minutes and run `zotero_update_search_database()` once anyway.
+   - Otherwise run `zotero_update_search_database()` (incremental; only new or changed items
+     are embedded, so it is cheap). Never use `force_rebuild` unless the user asks.
+6. **Report** (Section 5).
 
 ---
 
-## 4. Report
+## 3. Upgrade mode
 
-End with a compact summary: papers processed, notes created vs merged, highlights added
-per paper, **critical-appraisal flags raised** and **research-idea notes seeded** (new vs.
-linked-to-existing) per paper, and the file paths for both the lit notes and the idea notes.
-Call out a separate **"⚠️ Missing PDF (left in inbox, not processed)"** list naming every
-item skipped by the §2a PDF-required gate, plus any other skips (scanned/image-only,
-failed highlight).
+1. Collect targets: items named by the user, plus `_Claude-Read` items tagged
+   `claude/deepen` (use `zotero_search_by_tag`; load its schema with tool_search if needed).
+2. For each target, launch one subagent exactly as in Section 2 step 4, but with
+   `MODE=upgrade`. Sequential, one at a time.
+3. Run the semantic index refresh (Section 2, step 5) once at the end.
+4. Report as in Section 5.
 
-## 5. Guardrails
-- Idempotent: the `claude/done` tag prevents reprocessing; a title match prevents
-  duplicate notes. When unsure whether two items are the same paper, prefer merging and
-  say so in the report rather than creating a duplicate.
-- **A PDF is required to process an item.** No PDF attachment → skip it entirely and report
-  it as missing (§2a); never write a metadata/abstract-only note and never mark it done. The
-  item must stay in the inbox so re-running after the PDF is attached picks it up cleanly.
-- Never invent findings. If the PDF is unreadable, say so; don't fabricate an assessment.
-- **Never fabricate rigor.** Critical-appraisal flags must trace to the actual text —
-  "no major concerns" is a valid, honest result. Don't manufacture weaknesses to fill the
-  section, and don't soft-pedal a real one.
-- **Ideas extend, they don't summarize.** An idea note must add a new angle Dylan could
-  act on — if the only "idea" is restating the paper's own future work, seed fewer notes.
-- Never edit the user zone of a lit note, and never rewrite an existing idea note's body —
-  only append a `seeds:` entry / a `## Related findings` line (idea notes are user-owned
-  once created).
-- The assessment config governs judgement calls (focus, tone, highlight budget, appraisal
-  depth, idea count). Re-read it every run.
+An upgrade never re-reads pages already recorded in the note's `pages_read` field, never
+re-creates highlights that already exist, and never touches the user zone of the note.
 
 ---
 
-## 6. Permissions (hands-off runs)
+## 4. Migrate mode (one time, for v1 notes)
 
-Permission prompts are enforced by the Claude Code harness, not by this skill's text —
-so auto-approve can't be turned on from here. It's configured once in
-`~/.claude/settings.local.json` (`permissions.allow`). The rules that keep this skill
-prompt-free are:
-- `mcp__zotero` — the whole Zotero MCP server (connect + all read/write tools).
-- `Read`/`Write`/`Edit` on `C:/Users/DMi/OneDrive - NGI/Documents/NGI.Vault/**` — the
-  Obsidian vault (lit-notes, ideas, and the assessment config all live under it).
+v1 notes lack `title_norm`, `summary`, `tier` and `pages_read`, so de-duplication and recall
+cannot find them cheaply. This mode adds those fields to existing notes without touching
+anything else.
 
-If a new prompt appears (e.g. Zotero adds a tool, or a path moves), add the matching
-`allow` rule there — not in this file.
+1. Run `rg -L --files-without-match -g "*.md" "^title_norm:" "<lit-notes folder>"` through
+   Bash (the Grep tool has no files-without-match mode). Report the count before proceeding.
+2. Split the list into batches of 15. For each batch launch one subagent (sequential):
+
+   > You are migrating v1 literature notes for the lit-inbox skill. Read
+   > `{SKILL_DIR}\references\templates.md` §1 (field rules) only. For each note path below:
+   > Read only its first 45 lines; compute `title` (from the `**Title**::` field),
+   > `title_norm`, and `summary` (from `**Contribution**::`, at most 300 characters, ending at the last whole word before the limit);
+   > set `tier: 2`, `pages_read: "all (v1)"`, and `legacy: v1`. Fill only fields that are
+   > missing or empty; never overwrite an existing value. Back up the note first
+   > (copy to the backup folder as `{filename}.bak-YYYYMMDD`, never overwrite an existing
+   > backup), then insert the new fields into the frontmatter and change nothing else.
+   > Skip any note whose first 45 lines do not contain a recognisable `**Title**::` line,
+   > and any note with `status: unread` (never read, so no tier), and list them. Never delete
+   > files. Reply with one line: migrated N, skipped N, paths of skipped notes. Notes: {paths}
+
+3. Report totals and the skipped notes. v1 notes were read in full, so tier 2 is the correct
+   assumption; their Synth callouts will lack a `Numbers` line, which is acceptable.
+4. **Gap-fill identity fields** (for notes missing `citekey`, `zotero_key`, `attachment_key`
+   or `date_processed`; list them with `rg` on each `^field:\s*\S` pattern). Fill only what is
+   missing, after a backup:
+   - `citekey`: the filename without the leading `@` and the `.md`.
+   - `date_processed`: the file's creation date as `YYYY-MM-DD` (PowerShell
+     `(Get-Item -LiteralPath <path>).CreationTime`).
+   - `zotero_key`: find the item with `zotero_search_by_citation_key`, else
+     `zotero_search_items` on the title. Accept only if title and year agree.
+   - `attachment_key`: the PDF child from `zotero_get_item_children`.
+   If there is no confident match or no PDF, leave the field blank and list the note for the
+   user. Never guess a key.
+
+---
+
+## 5. Report
+
+Compile from the RESULT lines. Keep it compact:
+
+- Papers processed, split by action (created, merged, stubbed, upgraded) and by tier.
+- **Triage decisions with the one-line reason for every Tier 0 and Tier 1 paper**, so that a
+  wrongly demoted paper can be rescued by adding the tag `claude/deepen`.
+- Per Tier 2 paper: highlights added, critical-appraisal flags raised, idea notes seeded
+  (new vs linked to existing).
+- Backups created (count and folder).
+- **"Missing PDF (left in inbox, not processed)"** list, plus any other skips (no text layer,
+  failed subagent, failed highlight).
+- Papers left over because of the per-run cap.
+- Whether the semantic index was refreshed.
+- File paths of lit notes and idea notes.
+
+---
+
+## 6. Guardrails
+
+- **Published literature only.** Manuscripts under peer review must not enter this pipeline
+  (no indexing, no idea seeding, no shared vault writes). Refuse and point to a separate
+  review workflow.
+- **Never delete anything**: no files, no notes, no folders, no `rm`, no recursive deletes.
+  The only permitted removals are Zotero tags and collection membership as written in
+  `per-paper.md`, and a mistaken highlight annotation (which goes to the Zotero trash).
+- **Back up before editing any existing file** (note merges, upgrades, idea-note appends,
+  migration): copy to the backup folder as `{filename}.bak-YYYYMMDD`, never overwriting an
+  existing backup, and count it in the report. New files need no backup.
+- **Stay in scope**: only the vault folders and backup folder in Section 0, the skill
+  folder (read only), and the Zotero MCP. Touch no other path.
+- Idempotent: the `claude/done` tag prevents reprocessing, and the title-norm / DOI lookup
+  prevents duplicate notes. When unsure whether two items are the same paper, prefer merging
+  and say so.
+- **A PDF is required.** No PDF attachment: skip, leave in the inbox, no tag, no note.
+- Never invent findings or rigor flags. "No major concerns" and "not assessed" are valid,
+  honest results.
+- Never edit below `# My notes` in a lit note or below `# Develop` in an idea note.
+- Each subagent returns a single RESULT line. Long prose from a subagent defeats the
+  purpose of delegating.
+
+---
+
+## 7. Permissions (hands-off runs)
+
+Prompts are enforced by the Claude Code harness, not by this text. Configure once in
+`~/.claude/settings.local.json` (`permissions.allow`):
+
+- `mcp__zotero` for the whole Zotero MCP server.
+- `Read`, `Write` and `Edit` on `C:/Users/DMi/OneDrive - NGI/Documents/NGI.Vault/**`.
+- A narrowly scoped copy rule for backups (`Bash(cp -n:*)`); without it, subagents
+  fall back to reading and rewriting each note to back it up, which costs tokens.
+- `Read` on the skill folder.
+
+Subagents are expected to inherit these rules. If a permission prompt appears inside a
+subagent, add the matching rule rather than editing this file.

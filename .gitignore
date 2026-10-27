@@ -4,3 +4,7 @@ __pycache__/
 
 # Local skill backups (git tracks history)
 claude/_backups/
+
+# Local skill state (not tracked)
+claude/skills/.trash/
+claude/skills/synced/

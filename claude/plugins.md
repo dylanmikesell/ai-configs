@@ -56,4 +56,33 @@ Removed so far: `clinical-decision-support`, `clinical-reports`, `treatment-plan
 
 > ⚠️ **`/plugin update` restores upstream state**, re-adding pruned skills. Re-prune after updating.
 
+## Vendored skills (copied into this repo)
+
+### Co-Scientist toolkit skills (2026-10-27)
+
+- **Source:** https://github.com/shocklab/co-scientist-toolkit (Shocklab, Univ. of Cape Town). Code MIT, docs CC BY 4.0.
+  Licence copy: `claude/skills/THIRD-PARTY-LICENSE-co-scientist-toolkit.txt`.
+- **Why vendored, not installed as a plugin:** the `papers` plugin bundles a licence-check hook
+  (bash, needs `jq`/poppler, Mac-oriented) that I have not adopted. Installing the plugin would
+  register it. The toolkit is young and Mac-first, so I copied only the skills I want.
+- **Copied:** `reference-verifier` (with `scripts/verify_references.py`), `pre-register`,
+  `convergence-check` under `claude/skills/`.
+- **Local edits:** a provenance line under each title; in `reference-verifier`, the sentence about the
+  licence hook was replaced by a Windows note about `pdftotext`/`pandoc`.
+- **Not yet adapted:** `pre-register` is worded for RL/ML ("cheap pilot", compute); reword for
+  geophysics (synthetic test, small forward model) after first use.
+- **Script patch:** `verify_references.py` wrote its report and cache with the Windows default
+  encoding (cp1252) and crashed on the status symbols. Added `encoding="utf-8"` to the four
+  `read_text`/`write_text` calls (lines 137, 165, 1195, 1200). Re-apply if the script is re-vendored.
+- **Status:** smoke-tested 2026-10-27 on a two-entry `.bib` (one real, one invented). It runs on Windows.
+  Needs `uv` and `REFVERIFY_CONTACT_EMAIL`; optional `SEMANTIC_SCHOLAR_API_KEY`. Results: the invented
+  entry came back `low_confidence` (nearest unrelated paper shown), not `not_found`. The real entry
+  came back `metadata_mismatch` because Crossref's best match was a 2025 re-registration of the
+  same title (year 2017 vs 2025). So entries without a DOI need a human look; add DOIs to the `.bib`
+  for clean results.
+- **Considered, not adopted (yet):** `paper-review`, `claim-fact-checker`, `academic-pdf-to-mkd`,
+  `arxiv-fetcher`, the licence-check hook, `decision-page`, and the meetings/audio/documents plugins.
+  The `guidance/` templates (decision log, facts registry, handoff, paper `CLAUDE.md`) are queued for
+  `project-templates/`.
+
 Documented for future-me in the Obsidian vault: `Extras/MOC/🤖 AI + Claude MOC.md`.
